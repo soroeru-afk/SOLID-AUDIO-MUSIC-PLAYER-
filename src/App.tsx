@@ -163,12 +163,23 @@ export default function App() {
   const [playingPlaylistId, setPlayingPlaylistId] = useState<string>('all-tracks');
   const [searchQuery, setSearchQuery] = useState('');
   const [themeIndex, setThemeIndex] = useState(0); 
-  const [colWidths, setColWidths] = useState({
-    fileName: 180,
-    title: 300,
-    artist: 180,
-    album: 180
+  const [colWidths, setColWidths] = useState(() => {
+    const saved = localStorage.getItem('solid-col-widths');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return {
+      fileName: 180,
+      title: 300,
+      artist: 180,
+      album: 180
+    };
   });
+  
+  useEffect(() => {
+    localStorage.setItem('solid-col-widths', JSON.stringify(colWidths));
+  }, [colWidths]);
+
   const colResizing = useRef<{ key: string, startX: number, startWidth: number } | null>(null);
   
   const [sortConfig, setSortConfig] = useState<{ key: 'title' | 'artist' | 'album' | 'fileName' | 'trackNumber' | 'none', direction: 'asc' | 'desc' }>({ key: 'none', direction: 'asc' });
@@ -179,7 +190,15 @@ export default function App() {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ done: 0, total: 0 });
   const [isDragOver, setIsDragOver] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(220);
+  
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    return parseInt(localStorage.getItem('solid-sidebar-width') || '220', 10);
+  });
+
+  useEffect(() => {
+    localStorage.setItem('solid-sidebar-width', sidebarWidth.toString());
+  }, [sidebarWidth]);
+
   const sidebarResizing = useRef(false);
   
   // Edit State
