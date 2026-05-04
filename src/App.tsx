@@ -194,7 +194,9 @@ export default function App() {
   // Duplicates & Mini Mode State
   const [duplicateGroups, setDuplicateGroups] = useState<Track[][]>([]);
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
-  const [viewMode, setViewMode] = useState<'full' | 'mini' | 'slim'>('full');
+  const [viewMode, setViewMode] = useState<'full' | 'mini' | 'slim'>(() => {
+    return (localStorage.getItem('solid-view-mode') as 'full' | 'mini' | 'slim') || 'full';
+  });
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -271,14 +273,13 @@ export default function App() {
 
   useEffect(() => {
     setPlayerOffset({ x: 0, y: 0 });
+    localStorage.setItem('solid-view-mode', viewMode);
     try {
       if (viewMode === 'full') {
-        window.resizeTo(1200, 800);
+        window.resizeTo(1440, 900);
       } else if (viewMode === 'mini') {
-        // Increase dimensions to give the floating card a comfortable margin
         window.resizeTo(400, 750); 
       } else if (viewMode === 'slim') {
-        // Slightly larger to prevent cutoff
         window.resizeTo(640, 160);
       }
     } catch (e) {

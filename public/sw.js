@@ -1,4 +1,4 @@
-const CACHE_NAME = 'solid-audio-cache-v1';
+const CACHE_NAME = 'solid-audio-cache-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -31,11 +31,20 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    }).catch(() => {
-      // Fallback for offline mode if needed
-      return caches.match('/');
-    })
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cachedResponse) => {
+          return cachedResponse || caches.match('./');
+        });
+      })
   );
 });
