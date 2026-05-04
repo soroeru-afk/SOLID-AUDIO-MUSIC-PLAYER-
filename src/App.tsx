@@ -275,11 +275,11 @@ export default function App() {
       if (viewMode === 'full') {
         window.resizeTo(1200, 800);
       } else if (viewMode === 'mini') {
-        // Adjust width and height to fit the mini player perfectly
-        window.resizeTo(360, 580); 
+        // Increase height to account for OS title bar and prevent cutoff
+        window.resizeTo(380, 680); 
       } else if (viewMode === 'slim') {
-        // Adjust width and height to fit the slim player perfectly
-        window.resizeTo(600, 120);
+        // Slightly larger to prevent cutoff
+        window.resizeTo(620, 140);
       }
     } catch (e) {
       console.warn('Window resizing not supported', e);
