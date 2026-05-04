@@ -275,11 +275,11 @@ export default function App() {
       if (viewMode === 'full') {
         window.resizeTo(1200, 800);
       } else if (viewMode === 'mini') {
-        // Increase height to account for OS title bar and prevent cutoff
-        window.resizeTo(380, 680); 
+        // Increase dimensions to give the floating card a comfortable margin
+        window.resizeTo(400, 750); 
       } else if (viewMode === 'slim') {
         // Slightly larger to prevent cutoff
-        window.resizeTo(620, 140);
+        window.resizeTo(640, 160);
       }
     } catch (e) {
       console.warn('Window resizing not supported', e);
