@@ -271,12 +271,20 @@ export default function App() {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
 
+  const isInitialMount = useRef(true);
+
   useEffect(() => {
     setPlayerOffset({ x: 0, y: 0 });
     localStorage.setItem('solid-view-mode', viewMode);
+    
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
     try {
       if (viewMode === 'full') {
-        window.resizeTo(1440, 900);
+        window.resizeTo(1600, 1000);
       } else if (viewMode === 'mini') {
         window.resizeTo(400, 750); 
       } else if (viewMode === 'slim') {
