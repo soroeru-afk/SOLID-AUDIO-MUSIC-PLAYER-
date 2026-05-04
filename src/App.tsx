@@ -271,6 +271,19 @@ export default function App() {
 
   useEffect(() => {
     setPlayerOffset({ x: 0, y: 0 });
+    try {
+      if (viewMode === 'full') {
+        window.resizeTo(1200, 800);
+      } else if (viewMode === 'mini') {
+        // Adjust width and height to fit the mini player perfectly
+        window.resizeTo(360, 580); 
+      } else if (viewMode === 'slim') {
+        // Adjust width and height to fit the slim player perfectly
+        window.resizeTo(600, 120);
+      }
+    } catch (e) {
+      console.warn('Window resizing not supported', e);
+    }
   }, [viewMode]);
 
   // Load from IndexedDB
