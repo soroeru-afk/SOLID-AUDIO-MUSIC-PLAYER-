@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, Volume2, VolumeX,
   FolderOpen, ListMusic, Plus, Search, ChevronUp, ChevronDown, 
-  ChevronsUp, ChevronsDown, Palette, Activity, Check, X, Trash2, ListPlus, AlertCircle
+  ChevronsUp, ChevronsDown, Palette, Activity, Check, X, Trash2, ListPlus, AlertCircle,
+  Minimize2, Maximize2, Layers, Minus, PanelTop, GripVertical
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { get, set } from 'idb-keyval';
@@ -189,6 +190,88 @@ export default function App() {
   // Playlist Rename State
   const [renamingPlaylistId, setRenamingPlaylistId] = useState<string | null>(null);
   const [renamingPlaylistName, setRenamingPlaylistName] = useState('');
+
+  // Duplicates & Mini Mode State
+  const [duplicateGroups, setDuplicateGroups] = useState<Track[][]>([]);
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
+  const [viewMode, setViewMode] = useState<'full' | 'mini' | 'slim'>('full');
+
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  const playerRef = useRef<HTMLDivElement>(null);
+
+  // Dragging State for Mini/Slim modes
+  const [playerOffset, setPlayerOffset] = useState({ x: 0, y: 0 });
+  const dragState = useRef({ 
+    isDragging: false, 
+    startX: 0, startY: 0, 
+    initialOffsetX: 0, initialOffsetY: 0,
+    naturalLeft: 0, naturalTop: 0,
+    width: 0, height: 0
+  });
+
+  const handleDragStart = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button, input, [role="button"], .no-drag')) return;
+    
+    let nLeft = 0;
+    let nTop = 0;
+    let w = 0;
+    let h = 0;
+
+    if (playerRef.current) {
+      const rect = playerRef.current.getBoundingClientRect();
+      nLeft = rect.left - playerOffset.x;
+      nTop = rect.top - playerOffset.y;
+      w = rect.width;
+      h = rect.height;
+    }
+
+    dragState.current = {
+      isDragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialOffsetX: playerOffset.x,
+      initialOffsetY: playerOffset.y,
+      naturalLeft: nLeft,
+      naturalTop: nTop,
+      width: w,
+      height: h
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleDragMove = (e: React.PointerEvent) => {
+    if (!dragState.current.isDragging) return;
+    
+    let newX = dragState.current.initialOffsetX + (e.clientX - dragState.current.startX);
+    let newY = dragState.current.initialOffsetY + (e.clientY - dragState.current.startY);
+
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+    const st = dragState.current;
+
+    const maxNegativeX = -st.naturalLeft;
+    const maxPositiveX = screenW - st.width - st.naturalLeft;
+    const maxNegativeY = -st.naturalTop;
+    const maxPositiveY = screenH - st.height - st.naturalTop;
+
+    newX = Math.max(maxNegativeX, Math.min(newX, maxPositiveX));
+    newY = Math.max(maxNegativeY, Math.min(newY, maxPositiveY));
+
+    setPlayerOffset({
+      x: newX,
+      y: newY,
+    });
+  };
+
+  const handleDragEnd = (e: React.PointerEvent) => {
+    dragState.current.isDragging = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  useEffect(() => {
+    setPlayerOffset({ x: 0, y: 0 });
+  }, [viewMode]);
 
   // Load from IndexedDB
   useEffect(() => {
@@ -530,6 +613,56 @@ export default function App() {
     setEditArtist(track.artist);
   };
 
+  const findDuplicates = () => {
+    const groups = new Map<string, Track[]>();
+    
+    library.forEach(track => {
+      let key = '';
+      if (track.file && track.file.size) {
+        key = `file::${track.fileName.toLowerCase()}::${track.file.size}`;
+      } else if (track.title && track.title !== 'Unknown Title' && track.artist && track.artist !== 'Unknown Artist') {
+        key = `meta::${track.title.toLowerCase()}::${track.artist.toLowerCase()}`;
+      } else {
+        key = `name::${track.fileName.toLowerCase()}`;
+      }
+      
+      if (!groups.has(key)) {
+         groups.set(key, []);
+      }
+      groups.get(key)!.push(track);
+    });
+    
+    const dups = Array.from(groups.values()).filter(group => group.length > 1);
+    setDuplicateGroups(dups);
+    setShowDuplicatesModal(true);
+  };
+
+  const handleDeleteMultipleGlobal = async (trackIdsToDelete: string[]) => {
+    if (trackIdsToDelete.length === 0) return;
+
+    const idsSet = new Set(trackIdsToDelete);
+
+    // Filter library
+    const newLibrary = library.filter(t => !idsSet.has(t.id));
+
+    // Filter all playlists
+    const newPlaylists = playlists.map(p => ({
+      ...p,
+      tracks: p.tracks.filter(t => !idsSet.has(t.id))
+    }));
+
+    setLibrary(newLibrary);
+    setPlaylists(newPlaylists);
+    
+    // Update duplicates modal state if it is open
+    if (showDuplicatesModal) {
+      const newDups = duplicateGroups
+        .map(group => group.filter(t => !idsSet.has(t.id)))
+        .filter(group => group.length > 1);
+      setDuplicateGroups(newDups);
+    }
+  };
+
   const handleSelectFolder = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -631,7 +764,7 @@ export default function App() {
     if (e.target.files && e.target.files.length > 0) {
       // Convert FileList to Array immediately — the FileList reference
       // becomes invalid once the input is reset, so we capture it first.
-      const fileArray = Array.from(e.target.files);
+      const fileArray = Array.from(e.target.files) as File[];
       // Reset input AFTER capturing files so it can accept the same folder again
       if (fileInputRef.current) fileInputRef.current.value = '';
       await processFiles(fileArray);
@@ -714,6 +847,10 @@ export default function App() {
   };
 
   const clearActivePlaylist = () => {
+     setShowClearConfirm(true);
+  };
+
+  const executeClearData = () => {
      if (activePlaylistId === 'all-tracks') {
          setLibrary([]);
          setPlaylists(prev => prev.map(p => ({ ...p, tracks: [] })));
@@ -740,6 +877,7 @@ export default function App() {
          }
      }
      setSelectedTrackIds(new Set());
+     setShowClearConfirm(false);
   };
 
   const deleteSelectedTracks = () => {
@@ -1174,7 +1312,7 @@ export default function App() {
   // Replace old PanelBlock definition location
   return (
     <div 
-      className="h-screen w-screen flex flex-col p-4 gap-6 font-mono box-border overflow-hidden transition-colors duration-300"
+      className="h-screen w-screen relative flex flex-col font-mono box-border overflow-hidden transition-colors duration-300"
       style={{ ...styleVars, backgroundColor: 'var(--theme-bg)', color: 'var(--theme-textMain)' }}
     >
       {/* Hidden Inputs */}
@@ -1204,6 +1342,240 @@ export default function App() {
         multiple 
       />
 
+      {/* --- MINI & SLIM MODE UI --- */}
+      {viewMode !== 'full' && (
+         <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+          
+          {viewMode === 'mini' ? (
+             <div 
+                ref={playerRef}
+                className="w-[360px] rounded-xl flex flex-col overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.5)] border pointer-events-auto"
+                style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
+             >
+                {/* Embedded Draggable Header */}
+                <div 
+                   className="w-full h-10 flex items-center justify-between px-4 shrink-0 cursor-move border-b"
+                   style={{ borderColor: 'var(--theme-border)' }}
+                   onPointerDown={handleDragStart}
+                   onPointerMove={handleDragMove}
+                   onPointerUp={handleDragEnd}
+                   onPointerCancel={handleDragEnd}
+                >
+                   <div className="text-[10px] tracking-widest font-bold flex items-center gap-2 pointer-events-none" style={{ color: 'var(--theme-textMuted)' }}>
+                      <Activity size={12} style={{ color: 'var(--theme-accent)' }} />
+                      SOLID AUDIO
+                   </div>
+                   <div className="flex items-center gap-4 no-drag">
+                      <button 
+                        onClick={() => setViewMode('slim')}
+                        className="hover:opacity-80 transition-opacity"
+                        style={{ color: 'var(--theme-textMain)' }}
+                        title="Slim Mode"
+                      >
+                         <Minus size={14} />
+                      </button>
+                      <button 
+                        onClick={() => setViewMode('full')}
+                        className="hover:opacity-80 transition-opacity"
+                        style={{ color: 'var(--theme-textMain)' }}
+                        title="Close Mode"
+                      >
+                         <X size={16} />
+                      </button>
+                   </div>
+                </div>
+
+                {currentTrack ? (
+                    <div className="flex flex-col">
+                       <div className="w-full aspect-square border-b shrink-0 flex items-center justify-center relative overflow-hidden" style={{ borderColor: 'var(--theme-border)', backgroundColor: 'var(--theme-bg)' }}>
+                          {currentTrack.coverUrl ? (
+                             <img src={currentTrack.coverUrl} className="absolute inset-0 w-full h-full object-cover pointer-events-none" alt="album cover" />
+                          ) : (
+                             <Activity size={32} style={{ color: 'var(--theme-textDim)' }} />
+                          )}
+                       </div>
+                       <div className="p-6 flex flex-col gap-5">
+                          <div className="text-center flex flex-col gap-1">
+                             <h3 className="font-bold text-lg truncate leading-tight" style={{ color: 'var(--theme-textMain)' }}>{currentTrack.title}</h3>
+                             <p className="text-[10px] truncate tracking-widest uppercase" style={{ color: 'var(--theme-textMuted)' }}>{currentTrack.artist}</p>
+                          </div>
+                          
+                          {/* Transport & Time */}
+                          <div className="flex flex-col gap-2">
+                             <div className="flex justify-between items-center text-[10px] tracking-widest font-mono" style={{ color: 'var(--theme-textMuted)' }}>
+                                <span>{formatTime(currentTime)}</span>
+                                <span>{formatTime(duration)}</span>
+                             </div>
+                             <div 
+                                className="h-[6px] border cursor-pointer relative"
+                                style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)' }}
+                                onPointerDown={handlePointerDown}
+                                onPointerMove={handlePointerMove}
+                                onPointerUp={handlePointerUp}
+                                onPointerCancel={handlePointerUp}
+                             >
+                                <div 
+                                  className="absolute top-0 left-0 h-full transition-all duration-75 ease-linear pointer-events-none"
+                                  style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%`, backgroundColor: 'var(--theme-accent)' }}
+                                />
+                             </div>
+                          </div>
+                          
+                          {/* Controls */}
+                          <div className="flex items-center justify-between mt-2">
+                             <button 
+                               onPointerDown={() => setIsShuffle(!isShuffle)}
+                               className="w-8 h-8 flex items-center justify-center rounded transition-colors hover:opacity-80"
+                               style={{ color: isShuffle ? 'var(--theme-accent)' : 'var(--theme-textMuted)' }}
+                             >
+                                <Shuffle size={14} />
+                             </button>
+
+                             <div className="flex items-center gap-6">
+                               <button onPointerDown={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
+                                  <SkipBack size={24} />
+                               </button>
+                               <button 
+                                  onPointerDown={togglePlay} 
+                                  className="w-16 h-16 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95 shadow-lg"
+                                  style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
+                               >
+                                  {isPlaying ? <Pause size={28} /> : <Play size={28} className="translate-x-[2px]" />}
+                               </button>
+                               <button onPointerDown={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
+                                  <SkipForward size={24} />
+                               </button>
+                             </div>
+
+                             <button 
+                               onPointerDown={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
+                               className="w-8 h-8 flex items-center justify-center rounded transition-colors relative hover:opacity-80"
+                               style={{ color: repeatMode > 0 ? 'var(--theme-accent)' : 'var(--theme-textMuted)' }}
+                             >
+                                <Repeat size={14} />
+                                {repeatMode === 2 && <span className="absolute top-0 right-0 text-[8px]" style={{ color: 'var(--theme-accent)' }}>1</span>}
+                             </button>
+                          </div>
+                       </div>
+                    </div>
+                ) : (
+                    <div className="p-12 flex flex-col items-center justify-center gap-4 text-center">
+                       <Activity size={32} style={{ color: 'var(--theme-textDim)' }} />
+                       <p className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--theme-textMuted)' }}>NO TRACK SELECTED</p>
+                    </div>
+                )}
+             </div>
+          ) : (
+             <div 
+                ref={playerRef}
+                className="w-[600px] max-w-[90vw] rounded-xl flex items-center overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.5)] border p-2 gap-4 pointer-events-auto" 
+                style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
+             >
+                {/* Embedded Draggable Drag Handle */}
+                <div 
+                   className="w-8 h-full flex flex-col items-center justify-center shrink-0 cursor-move rounded hover:bg-black/10 transition-colors"
+                   onPointerDown={handleDragStart}
+                   onPointerMove={handleDragMove}
+                   onPointerUp={handleDragEnd}
+                   onPointerCancel={handleDragEnd}
+                >
+                   <GripVertical size={14} className="opacity-30 pointer-events-none" style={{ color: 'var(--theme-textMain)' }} />
+                </div>
+
+                {/* SLIM MODE UI */}
+                {currentTrack ? (
+                   <>
+                      <div className="flex items-center gap-3 w-[30%] min-w-0 pr-2 shrink-0 border-r" style={{ borderColor: 'var(--theme-border)' }}>
+                         <div className="w-10 h-10 shrink-0 border relative overflow-hidden" style={{ borderColor: 'var(--theme-border)' }}>
+                            {currentTrack.coverUrl ? (
+                               <img src={currentTrack.coverUrl} className="absolute inset-0 w-full h-full object-cover" alt="album" />
+                            ) : (
+                               <Activity size={16} className="absolute inset-0 m-auto" style={{ color: 'var(--theme-textDim)' }} />
+                            )}
+                         </div>
+                         <div className="flex flex-col min-w-0 overflow-hidden">
+                            <div className="text-xs font-bold truncate tracking-wide" style={{ color: 'var(--theme-textMain)' }}>{currentTrack.title}</div>
+                            <div className="text-[9px] uppercase tracking-wider truncate" style={{ color: 'var(--theme-textMuted)' }}>{currentTrack.artist}</div>
+                         </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 justify-center shrink-0">
+                          <button onPointerDown={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipBack size={16} /></button>
+                          <button 
+                             onPointerDown={togglePlay} 
+                             className="w-10 h-10 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95"
+                             style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
+                          >
+                             {isPlaying ? <Pause size={18} /> : <Play size={18} className="translate-x-[1px]" />}
+                          </button>
+                          <button onPointerDown={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipForward size={16} /></button>
+                      </div>
+
+                      <div className="flex-1 flex items-center gap-3 px-2 min-w-0">
+                         <div className="text-[9px] tracking-widest font-mono shrink-0" style={{ color: 'var(--theme-textMuted)' }}>{formatTime(currentTime)}</div>
+                         <div 
+                             className="h-[4px] flex-1 border cursor-pointer relative"
+                             style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)' }}
+                             onPointerDown={handlePointerDown}
+                             onPointerMove={handlePointerMove}
+                             onPointerUp={handlePointerUp}
+                             onPointerCancel={handlePointerUp}
+                         >
+                            <div 
+                               className="absolute top-0 left-0 h-full transition-all duration-75 ease-linear pointer-events-none"
+                               style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%`, backgroundColor: 'var(--theme-accent)' }}
+                            />
+                         </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 px-2">
+                          <button 
+                            onPointerDown={() => setIsShuffle(!isShuffle)}
+                            className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:opacity-80"
+                            style={{ color: isShuffle ? 'var(--theme-accent)' : 'var(--theme-textMuted)', backgroundColor: isShuffle ? 'var(--theme-accentMuted)' : 'transparent' }}
+                          >
+                             <Shuffle size={12} />
+                          </button>
+                          <button 
+                            onPointerDown={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
+                            className="w-6 h-6 flex items-center justify-center rounded transition-colors relative hover:opacity-80"
+                            style={{ color: repeatMode > 0 ? 'var(--theme-accent)' : 'var(--theme-textMuted)', backgroundColor: repeatMode > 0 ? 'var(--theme-accentMuted)' : 'transparent' }}
+                          >
+                             <Repeat size={12} />
+                             {repeatMode === 2 && <span className="absolute -top-1 -right-1 text-[8px]" style={{ color: 'var(--theme-accent)' }}>1</span>}
+                          </button>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 shrink-0 pl-3 border-l" style={{ borderColor: 'var(--theme-border)' }}>
+                         <button 
+                           onClick={() => setViewMode('mini')}
+                           className="hover:opacity-80 transition-opacity"
+                           style={{ color: 'var(--theme-textMain)' }}
+                           title="Card Mode"
+                         >
+                            <PanelTop size={14} />
+                         </button>
+                         <button 
+                           onClick={() => setViewMode('full')}
+                           className="hover:opacity-80 transition-opacity"
+                           style={{ color: 'var(--theme-textMain)' }}
+                           title="Close Mode"
+                         >
+                            <X size={16} />
+                         </button>
+                      </div>
+                   </>
+                ) : (
+                   <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
+                )}
+             </div>
+          )}
+         </div>
+      )}
+
+      {/* --- MAIN UI --- */}
+      <div className={`flex flex-col h-full w-full p-4 gap-6 box-border transition-opacity duration-300 ${viewMode !== 'full' ? 'opacity-0 pointer-events-none absolute' : 'opacity-100 relative'}`}>
+
       {/* Top Header Row */}
       <header className="flex justify-between items-center px-1">
         <div className="flex items-center gap-3">
@@ -1211,6 +1583,16 @@ export default function App() {
           <h1 className="text-xl font-bold tracking-widest uppercase">SOLID AUDIO MUSIC PLAYER</h1>
         </div>
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setViewMode('mini')}
+            className="flex items-center justify-center border h-6 px-2 transition-colors hover:opacity-80"
+            style={{ borderColor: 'var(--theme-border)', backgroundColor: 'var(--theme-surface)', color: 'var(--theme-textMuted)' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--theme-textMain)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--theme-textMuted)'}
+            title="Mini Player Mode"
+          >
+            <Minimize2 size={12} />
+          </button>
           <button 
             onClick={cycleTheme}
             className="flex items-center justify-center gap-2 border h-6 px-2 transition-colors hover:opacity-80"
@@ -1414,35 +1796,45 @@ export default function App() {
 
         {/* 03 SETTINGS / ACTIONS */}
         <PanelBlock title="03 SYSTEM ACTIONS" className="col-span-3 p-4">
-           <div className="grid grid-cols-1 gap-3 h-full pt-1">
+           <div className="flex flex-col gap-3 h-full pt-1">
                <button 
                   onClick={handleSelectFolder}
-                  className="flex items-center justify-center gap-2 border h-8 text-[10px] tracking-widest font-bold transition-colors hover:opacity-80"
+                  className="flex items-center justify-center gap-2 border h-8 shrink-0 text-[10px] tracking-widest font-bold transition-colors hover:opacity-80"
                   style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-borderActive)', color: 'var(--theme-accent)' }}
                 >
                   <FolderOpen size={14} />
                   READ DIRECTORY
                </button>
-               <div className="grid grid-cols-2 gap-3">
+               
+               <div className="grid grid-cols-2 gap-2 shrink-0">
                  <button 
                     onClick={() => { setIsCreatingPlaylist(true); setNewPlaylistName(''); }}
-                    className="flex items-center justify-center gap-2 border h-8 text-[10px] tracking-widest transition-colors hover:opacity-80 active:scale-95"
+                    className="flex items-center justify-center gap-2 border h-7 text-[9px] tracking-widest transition-colors hover:opacity-80 active:scale-95"
                     style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
                   >
-                    <Plus size={14} style={{ color: 'var(--theme-textMuted)' }} />
-                    CREATE VIEW
+                    <Plus size={12} style={{ color: 'var(--theme-textMuted)' }} />
+                    CREATE LIST
+                 </button>
+                 <button 
+                    onClick={findDuplicates}
+                    className="flex items-center justify-center gap-2 border h-7 text-[9px] tracking-widest transition-colors hover:opacity-80 active:scale-95"
+                    style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
+                  >
+                    <Layers size={12} style={{ color: 'var(--theme-textMuted)' }} />
+                    FIND DUPES
                  </button>
                  <button 
                     onClick={clearActivePlaylist}
-                    className="flex items-center justify-center gap-2 border h-8 text-[10px] tracking-widest transition-colors hover:opacity-80 active:scale-95 disabled:opacity-50"
+                    className="col-span-2 flex items-center justify-center gap-2 border h-7 text-[9px] tracking-widest transition-colors hover:opacity-80 active:scale-95 disabled:opacity-50"
                     style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
                     disabled={displayTracks.length === 0}
                   >
-                    <Trash2 size={14} style={{ color: 'var(--theme-textMuted)' }} />
-                    CLEAR DATA
+                    <Trash2 size={12} style={{ color: 'var(--theme-textMuted)' }} />
+                    CLEAR ALL DATA
                  </button>
                </div>
-               <div className="relative mt-auto border h-8 flex items-center" style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)' }}>
+               
+               <div className="relative mt-auto border h-8 flex items-center shrink-0" style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)' }}>
                   <Search size={12} className="absolute left-2" style={{ color: 'var(--theme-textDim)' }} />
                   <input 
                     type="text" 
@@ -1786,6 +2178,98 @@ export default function App() {
           <span style={isPlaying ? { color: 'var(--theme-accent)' } : {}}>{isPlaying ? 'ENGINE ACTIVE' : 'ENGINE IDLE'}</span>
         </div>
       </footer>
+
+      </div>
+
+      {/* Duplicate Modal */}
+      {showDuplicatesModal && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm font-mono tracking-widest p-4">
+            <div className="w-full max-w-2xl max-h-[80vh] flex flex-col border shadow-2xl" style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)' }}>
+               <div className="p-4 border-b flex justify-between items-center" style={{ borderColor: 'var(--theme-border)' }}>
+                  <h2 className="text-sm font-bold text-[var(--theme-textMain)]">DUPLICATES DETECTED</h2>
+                  <button onClick={() => setShowDuplicatesModal(false)} className="hover:opacity-80">
+                     <X size={16} style={{ color: 'var(--theme-textMuted)' }} />
+                  </button>
+               </div>
+               
+               {duplicateGroups.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 gap-4" style={{ color: 'var(--theme-textMuted)' }}>
+                     <Check size={48} style={{ color: 'var(--theme-accent)' }} />
+                     <p className="text-xs uppercase">NO DUPLICATES FOUND IN LIBRARY</p>
+                  </div>
+               ) : (
+                  <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
+                     {duplicateGroups.map((group, i) => (
+                        <div key={i} className="border flex flex-col" style={{ borderColor: 'var(--theme-border)' }}>
+                           <div className="text-[10px] uppercase p-2 border-b truncate font-bold" style={{ backgroundColor: 'var(--theme-surfaceLighter)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}>
+                              {group[0].title || group[0].fileName} - {group[0].artist}
+                           </div>
+                           <div className="flex flex-col">
+                              {group.map((track) => (
+                                 <div key={track.id} className="flex justify-between items-center p-2 border-b last:border-b-0 text-[10px]" style={{ borderColor: 'var(--theme-border)', backgroundColor: 'var(--theme-bg)' }}>
+                                    <div className="truncate pr-4 flex-1" style={{ color: 'var(--theme-textMuted)' }}>
+                                       {track.fileName} {track.file && track.file.size ? `[${(track.file.size / 1024 / 1024).toFixed(1)}MB]` : ''}
+                                    </div>
+                                    <button 
+                                       onClick={() => handleDeleteMultipleGlobal([track.id])}
+                                       className="shrink-0 border px-3 py-1 hover:bg-black/20 transition-colors uppercase"
+                                       style={{ borderColor: 'red', color: 'red' }}
+                                    >
+                                       DELETE
+                                    </button>
+                                 </div>
+                              ))}
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               )}
+               
+               <div className="p-4 border-t flex justify-end" style={{ borderColor: 'var(--theme-border)' }}>
+                  <button 
+                     onClick={() => setShowDuplicatesModal(false)} 
+                     className="px-6 py-2 text-[10px] border uppercase hover:opacity-80 transition-opacity"
+                     style={{ borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
+                  >
+                     CLOSE
+                  </button>
+               </div>
+            </div>
+         </div>
+      )}
+
+      {/* Clear Confirmation Modal */}
+      {showClearConfirm && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm font-mono tracking-widest p-4">
+            <div className="w-full max-w-sm flex flex-col border shadow-2xl" style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)' }}>
+               <div className="p-4 border-b flex items-center gap-3" style={{ borderColor: 'var(--theme-border)' }}>
+                  <AlertCircle size={18} style={{ color: 'red' }} />
+                  <h2 className="text-sm font-bold text-[var(--theme-textMain)]">WARNING</h2>
+               </div>
+               <div className="p-6 text-xs text-center leading-relaxed" style={{ color: 'var(--theme-textMuted)' }}>
+                  {activePlaylistId === 'all-tracks' 
+                    ? "ARE YOU SURE YOU WANT TO CLEAR ALL DATA? THIS WILL EMPTY YOUR ENTIRE LIBRARY." 
+                    : "ARE YOU SURE YOU WANT TO CLEAR THIS PLAYLIST?"}
+               </div>
+               <div className="p-4 border-t flex justify-end gap-4" style={{ borderColor: 'var(--theme-border)' }}>
+                  <button 
+                     onClick={() => setShowClearConfirm(false)} 
+                     className="px-6 py-2 text-[10px] border uppercase hover:opacity-80 transition-opacity"
+                     style={{ borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
+                  >
+                     CANCEL
+                  </button>
+                  <button 
+                     onClick={executeClearData} 
+                     className="px-6 py-2 text-[10px] border uppercase hover:opacity-80 transition-opacity font-bold"
+                     style={{ borderColor: 'red', backgroundColor: 'transparent', color: 'red' }}
+                  >
+                     DELETE
+                  </button>
+               </div>
+            </div>
+         </div>
+      )}
 
     </div>
   );
