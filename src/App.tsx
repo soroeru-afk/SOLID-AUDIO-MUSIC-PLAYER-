@@ -1607,7 +1607,27 @@ export default function App() {
                       </div>
                    </>
                 ) : (
-                   <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
+                   <>
+                     <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
+                     <div className="flex items-center gap-3 shrink-0 pl-3 border-l" style={{ borderColor: 'var(--theme-border)' }}>
+                        <button 
+                          onClick={() => setViewMode('mini')}
+                          className="hover:opacity-80 transition-opacity"
+                          style={{ color: 'var(--theme-textMain)' }}
+                          title="Card Mode"
+                        >
+                           <PanelTop size={14} />
+                        </button>
+                        <button 
+                          onClick={() => setViewMode('full')}
+                          className="hover:opacity-80 transition-opacity"
+                          style={{ color: 'var(--theme-textMain)' }}
+                          title="Close Mode"
+                        >
+                           <X size={16} />
+                        </button>
+                     </div>
+                   </>
                 )}
              </div>
           )}
