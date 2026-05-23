@@ -163,23 +163,12 @@ export default function App() {
   const [playingPlaylistId, setPlayingPlaylistId] = useState<string>('all-tracks');
   const [searchQuery, setSearchQuery] = useState('');
   const [themeIndex, setThemeIndex] = useState(0); 
-  const [colWidths, setColWidths] = useState(() => {
-    const saved = localStorage.getItem('solid-col-widths');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
-    }
-    return {
-      fileName: 180,
-      title: 300,
-      artist: 180,
-      album: 180
-    };
+  const [colWidths, setColWidths] = useState({
+    fileName: 180,
+    title: 300,
+    artist: 180,
+    album: 180
   });
-  
-  useEffect(() => {
-    localStorage.setItem('solid-col-widths', JSON.stringify(colWidths));
-  }, [colWidths]);
-
   const colResizing = useRef<{ key: string, startX: number, startWidth: number } | null>(null);
   
   const [sortConfig, setSortConfig] = useState<{ key: 'title' | 'artist' | 'album' | 'fileName' | 'trackNumber' | 'none', direction: 'asc' | 'desc' }>({ key: 'none', direction: 'asc' });
@@ -190,15 +179,7 @@ export default function App() {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ done: 0, total: 0 });
   const [isDragOver, setIsDragOver] = useState(false);
-  
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    return parseInt(localStorage.getItem('solid-sidebar-width') || '220', 10);
-  });
-
-  useEffect(() => {
-    localStorage.setItem('solid-sidebar-width', sidebarWidth.toString());
-  }, [sidebarWidth]);
-
+  const [sidebarWidth, setSidebarWidth] = useState(220);
   const sidebarResizing = useRef(false);
   
   // Edit State
@@ -213,9 +194,7 @@ export default function App() {
   // Duplicates & Mini Mode State
   const [duplicateGroups, setDuplicateGroups] = useState<Track[][]>([]);
   const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
-  const [viewMode, setViewMode] = useState<'full' | 'mini' | 'slim'>(() => {
-    return (localStorage.getItem('solid-view-mode') as 'full' | 'mini' | 'slim') || 'full';
-  });
+  const [viewMode, setViewMode] = useState<'full' | 'mini' | 'slim'>('full');
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -290,28 +269,8 @@ export default function App() {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
 
-  const isInitialMount = useRef(true);
-
   useEffect(() => {
     setPlayerOffset({ x: 0, y: 0 });
-    localStorage.setItem('solid-view-mode', viewMode);
-    
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-
-    try {
-      if (viewMode === 'full') {
-        window.resizeTo(1600, 1000);
-      } else if (viewMode === 'mini') {
-        window.resizeTo(400, 750); 
-      } else if (viewMode === 'slim') {
-        window.resizeTo(640, 160);
-      }
-    } catch (e) {
-      console.warn('Window resizing not supported', e);
-    }
   }, [viewMode]);
 
   // Load from IndexedDB
@@ -416,6 +375,16 @@ export default function App() {
 
   useEffect(() => {
     if (!audioRef.current || audioCtxRef.current) return;
+
+    // iPad / iOS / Safari detected? Bypass Web Audio API (MediaElementAudioSourceNode)
+    // to prevent standard WebKit bugs where subsequent tracks or reloads become completely silent.
+    const ua = typeof window !== 'undefined' ? window.navigator.userAgent.toLowerCase() : '';
+    const isSafari = ua.includes('safari') && !ua.includes('chrome');
+    const isIOS = /ipad|iphone|ipod/.test(ua) || (typeof navigator !== 'undefined' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isSafari || isIOS) {
+       console.log("iOS/Safari detected. Bypassing Web Audio API filters to maintain robust, multi-track audio playback.");
+       return;
+    }
 
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -1465,7 +1434,7 @@ export default function App() {
                           {/* Controls */}
                           <div className="flex items-center justify-between mt-2">
                              <button 
-                               onPointerDown={() => setIsShuffle(!isShuffle)}
+                               onClick={() => setIsShuffle(!isShuffle)}
                                className="w-8 h-8 flex items-center justify-center rounded transition-colors hover:opacity-80"
                                style={{ color: isShuffle ? 'var(--theme-accent)' : 'var(--theme-textMuted)' }}
                              >
@@ -1473,23 +1442,23 @@ export default function App() {
                              </button>
 
                              <div className="flex items-center gap-6">
-                               <button onPointerDown={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
+                               <button onClick={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
                                   <SkipBack size={24} />
                                </button>
                                <button 
-                                  onPointerDown={togglePlay} 
+                                  onClick={togglePlay} 
                                   className="w-16 h-16 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95 shadow-lg"
                                   style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
                                >
                                   {isPlaying ? <Pause size={28} /> : <Play size={28} className="translate-x-[2px]" />}
                                </button>
-                               <button onPointerDown={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
+                               <button onClick={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}>
                                   <SkipForward size={24} />
                                </button>
                              </div>
 
                              <button 
-                               onPointerDown={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
+                               onClick={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
                                className="w-8 h-8 flex items-center justify-center rounded transition-colors relative hover:opacity-80"
                                style={{ color: repeatMode > 0 ? 'var(--theme-accent)' : 'var(--theme-textMuted)' }}
                              >
@@ -1541,15 +1510,15 @@ export default function App() {
                       </div>
 
                       <div className="flex items-center gap-3 justify-center shrink-0">
-                          <button onPointerDown={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipBack size={16} /></button>
+                          <button onClick={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipBack size={16} /></button>
                           <button 
-                             onPointerDown={togglePlay} 
+                             onClick={togglePlay} 
                              className="w-10 h-10 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95"
                              style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
                           >
                              {isPlaying ? <Pause size={18} /> : <Play size={18} className="translate-x-[1px]" />}
                           </button>
-                          <button onPointerDown={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipForward size={16} /></button>
+                          <button onClick={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipForward size={16} /></button>
                       </div>
 
                       <div className="flex-1 flex items-center gap-3 px-2 min-w-0">
@@ -1571,14 +1540,14 @@ export default function App() {
 
                       <div className="flex items-center gap-1 shrink-0 px-2">
                           <button 
-                            onPointerDown={() => setIsShuffle(!isShuffle)}
+                            onClick={() => setIsShuffle(!isShuffle)}
                             className="w-6 h-6 flex items-center justify-center rounded transition-colors hover:opacity-80"
                             style={{ color: isShuffle ? 'var(--theme-accent)' : 'var(--theme-textMuted)', backgroundColor: isShuffle ? 'var(--theme-accentMuted)' : 'transparent' }}
                           >
                              <Shuffle size={12} />
                           </button>
                           <button 
-                            onPointerDown={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
+                            onClick={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
                             className="w-6 h-6 flex items-center justify-center rounded transition-colors relative hover:opacity-80"
                             style={{ color: repeatMode > 0 ? 'var(--theme-accent)' : 'var(--theme-textMuted)', backgroundColor: repeatMode > 0 ? 'var(--theme-accentMuted)' : 'transparent' }}
                           >
@@ -1607,27 +1576,7 @@ export default function App() {
                       </div>
                    </>
                 ) : (
-                   <>
-                     <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
-                     <div className="flex items-center gap-3 shrink-0 pl-3 border-l" style={{ borderColor: 'var(--theme-border)' }}>
-                        <button 
-                          onClick={() => setViewMode('mini')}
-                          className="hover:opacity-80 transition-opacity"
-                          style={{ color: 'var(--theme-textMain)' }}
-                          title="Card Mode"
-                        >
-                           <PanelTop size={14} />
-                        </button>
-                        <button 
-                          onClick={() => setViewMode('full')}
-                          className="hover:opacity-80 transition-opacity"
-                          style={{ color: 'var(--theme-textMain)' }}
-                          title="Close Mode"
-                        >
-                           <X size={16} />
-                        </button>
-                     </div>
-                   </>
+                   <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
                 )}
              </div>
           )}
@@ -1746,14 +1695,14 @@ export default function App() {
             {/* Play modes */}
             <div className="flex gap-2">
               <button 
-                onPointerDown={() => setIsShuffle(!isShuffle)}
+                onClick={() => setIsShuffle(!isShuffle)}
                 className="w-8 h-8 flex items-center justify-center border transition-colors hover:opacity-80 active:scale-95"
                 style={isShuffle ? { backgroundColor: 'var(--theme-accentMuted)', color: 'var(--theme-accent)', borderColor: 'var(--theme-borderActive)' } : { backgroundColor: 'var(--theme-bg)', color: 'var(--theme-textMuted)', borderColor: 'var(--theme-border)' }}
               >
                 <Shuffle size={14} />
               </button>
               <button 
-                onPointerDown={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
+                onClick={() => setRepeatMode((prev) => (prev + 1) % 3 as 0|1|2)}
                 className="w-8 h-8 flex items-center justify-center border transition-colors relative hover:opacity-80 active:scale-95"
                 style={repeatMode > 0 ? { backgroundColor: 'var(--theme-accentMuted)', color: 'var(--theme-accent)', borderColor: 'var(--theme-borderActive)' } : { backgroundColor: 'var(--theme-bg)', color: 'var(--theme-textMuted)', borderColor: 'var(--theme-border)' }}
               >
@@ -1765,21 +1714,21 @@ export default function App() {
             {/* Transport Core */}
             <div className="flex gap-1 justify-center">
               <button 
-                onPointerDown={handlePrev} 
+                onClick={handlePrev} 
                 className="w-12 h-10 flex items-center justify-center border transition-colors hover:opacity-80 active:scale-95"
                 style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
               >
                 <SkipBack size={16} />
               </button>
               <button 
-                onPointerDown={togglePlay} 
+                onClick={togglePlay} 
                 className="w-16 h-10 flex items-center justify-center transition-colors border hover:opacity-90 active:scale-95"
                 style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
               >
                 {isPlaying ? <Pause size={16} /> : <Play size={16} className="ml-1" />}
               </button>
               <button 
-                onPointerDown={handleNext} 
+                onClick={handleNext} 
                 className="w-12 h-10 flex items-center justify-center border transition-colors hover:opacity-80 active:scale-95"
                 style={{ backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
               >
