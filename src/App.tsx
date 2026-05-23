@@ -951,6 +951,15 @@ export default function App() {
     });
   };
 
+  const unlockAudio = () => {
+    if (audioRef.current) {
+      if (audioCtxRef.current?.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      audioRef.current.play().catch(() => {});
+    }
+  };
+
   const playTrack = (index: number) => {
     const trackToPlay = displayTracks[index];
     if (!trackToPlay) return;
@@ -960,6 +969,8 @@ export default function App() {
       togglePlay();
       return;
     }
+
+    unlockAudio();
 
     // Snapshot the current view as the playback queue
     setPlaybackQueue(displayTracks);
@@ -987,6 +998,8 @@ export default function App() {
 
   const handleNext = () => {
     if (playbackQueue.length === 0) return;
+    
+    unlockAudio();
     
     if (repeatMode === 2) {
       if (audioRef.current) {
@@ -1032,6 +1045,8 @@ export default function App() {
       return;
     }
     if (playbackQueue.length === 0 || currentTrackIndex === -1) return;
+    
+    unlockAudio();
     
     let prevIndex = currentTrackIndex - 1;
     if (prevIndex < 0) {
@@ -1328,6 +1343,7 @@ export default function App() {
       {/* Hidden Inputs */}
       <audio 
         ref={audioRef} 
+        playsInline 
         src={currentTrack?.url} 
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
