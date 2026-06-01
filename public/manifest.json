@@ -1,6 +1,6 @@
 {
-  "name": "Solid Audio Music Player",
-  "short_name": "AudioPlayer",
+  "name": "SOLID AUDIO MUSIC PLAYER",
+  "short_name": "AUDIO PLAYER",
   "description": "A progressive web app music player",
   "start_url": "./",
   "display": "standalone",
