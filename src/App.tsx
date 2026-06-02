@@ -201,6 +201,8 @@ export default function App() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const playerRef = useRef<HTMLDivElement>(null);
+  const lastFullWindowSize = useRef({ width: window.outerWidth || 1280, height: window.outerHeight || 800 });
+  const frameSizes = useRef({ width: 16, height: 40 });
 
   // Dragging State for Mini/Slim modes
   const [playerOffset, setPlayerOffset] = useState({ x: 0, y: 0 });
@@ -500,6 +502,53 @@ export default function App() {
     t.fileName.toLowerCase().includes(searchQuery.toLowerCase())
   ));
   const currentTrack = playbackQueue[currentTrackIndex] || null;
+
+  // Track window resizing manually in full mode
+  useEffect(() => {
+    const handleResize = () => {
+      if (viewMode === 'full') {
+        lastFullWindowSize.current = {
+          width: window.outerWidth,
+          height: window.outerHeight
+        };
+        const w = window.outerWidth - window.innerWidth;
+        const h = window.outerHeight - window.innerHeight;
+        if (w > 0 && h > 0) {
+          frameSizes.current = { width: w, height: h };
+        }
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    // Initialize frame sizes once if starting in full mode
+    if (viewMode === 'full') {
+      const w = window.outerWidth - window.innerWidth;
+      const h = window.outerHeight - window.innerHeight;
+      if (w > 0 && h > 0) {
+        frameSizes.current = { width: w, height: h };
+      }
+    }
+    return () => window.removeEventListener('resize', handleResize);
+  }, [viewMode]);
+
+  // Handle automatic window resizing to match the mini/slim/full modes
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const fWidth = frameSizes.current.width;
+    const fHeight = frameSizes.current.height;
+
+    if (viewMode === 'full') {
+      const prev = lastFullWindowSize.current;
+      const restoreWidth = Math.max(1100, prev.width);
+      const restoreHeight = Math.max(750, prev.height);
+      window.resizeTo(restoreWidth, restoreHeight);
+    } else if (viewMode === 'mini') {
+      const targetHeight = currentTrack ? 745 : 240;
+      window.resizeTo(380 + fWidth, targetHeight + fHeight);
+    } else if (viewMode === 'slim') {
+      window.resizeTo(780 + fWidth, 48 + fHeight);
+    }
+  }, [viewMode, currentTrack ? currentTrack.id : null, isInitialized]);
 
   // Volume Sync
   useEffect(() => {
@@ -1397,12 +1446,12 @@ export default function App() {
           {viewMode === 'mini' ? (
              <div 
                 ref={playerRef}
-                className="w-[360px] rounded-xl flex flex-col overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.5)] border pointer-events-auto"
-                style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
+                className="w-full h-full flex flex-col overflow-hidden pointer-events-auto"
+                style={{ backgroundColor: 'var(--theme-surface)', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
              >
                 {/* Embedded Draggable Header */}
                 <div 
-                   className="w-full h-10 flex items-center justify-between px-4 shrink-0 cursor-move border-b"
+                   className="w-full h-10 flex items-center justify-between px-4 shrink-0 cursor-move border-b drag-region"
                    style={{ borderColor: 'var(--theme-border)' }}
                    onPointerDown={handleDragStart}
                    onPointerMove={handleDragMove}
@@ -1434,7 +1483,7 @@ export default function App() {
                 </div>
 
                 {currentTrack ? (
-                    <div className="flex flex-col">
+                    <div className="flex flex-col no-drag">
                        <div className="w-full aspect-square border-b shrink-0 flex items-center justify-center relative overflow-hidden" style={{ borderColor: 'var(--theme-border)', backgroundColor: 'var(--theme-bg)' }}>
                           {currentTrack.coverUrl ? (
                              <img src={currentTrack.coverUrl} className="absolute inset-0 w-full h-full object-cover pointer-events-none" alt="album cover" />
@@ -1507,7 +1556,7 @@ export default function App() {
                        </div>
                     </div>
                 ) : (
-                    <div className="p-12 flex flex-col items-center justify-center gap-4 text-center">
+                    <div className="p-12 flex flex-col items-center justify-center gap-4 text-center no-drag">
                        <Activity size={32} style={{ color: 'var(--theme-textDim)' }} />
                        <p className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--theme-textMuted)' }}>NO TRACK SELECTED</p>
                     </div>
@@ -1516,12 +1565,12 @@ export default function App() {
           ) : (
              <div 
                 ref={playerRef}
-                className="w-[600px] max-w-[90vw] rounded-xl flex items-center overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.5)] border p-2 gap-4 pointer-events-auto" 
-                style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
-             >
+                 className="w-full h-12 border flex items-center overflow-hidden py-1 px-3 gap-4 pointer-events-auto"
+                 style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-border)', borderLeft: 'none', borderRight: 'none', transform: `translate(${playerOffset.x}px, ${playerOffset.y}px)` }}
+              >
                 {/* Embedded Draggable Drag Handle */}
                 <div 
-                   className="w-8 h-full flex flex-col items-center justify-center shrink-0 cursor-move rounded hover:bg-black/10 transition-colors"
+                   className="w-8 h-full flex flex-col items-center justify-center shrink-0 cursor-move rounded hover:bg-black/10 transition-colors drag-region"
                    onPointerDown={handleDragStart}
                    onPointerMove={handleDragMove}
                    onPointerUp={handleDragEnd}
@@ -1532,9 +1581,9 @@ export default function App() {
 
                 {/* SLIM MODE UI */}
                 {currentTrack ? (
-                   <>
+                   <div className="flex-1 flex items-center gap-4 no-drag">
                       <div className="flex items-center gap-3 w-[30%] min-w-0 pr-2 shrink-0 border-r" style={{ borderColor: 'var(--theme-border)' }}>
-                         <div className="w-10 h-10 shrink-0 border relative overflow-hidden" style={{ borderColor: 'var(--theme-border)' }}>
+                         <div className="w-8 h-8 shrink-0 border relative overflow-hidden" style={{ borderColor: 'var(--theme-border)' }}>
                             {currentTrack.coverUrl ? (
                                <img src={currentTrack.coverUrl} className="absolute inset-0 w-full h-full object-cover" alt="album" />
                             ) : (
@@ -1551,10 +1600,10 @@ export default function App() {
                           <button onClick={handlePrev} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipBack size={16} /></button>
                           <button 
                              onClick={togglePlay} 
-                             className="w-10 h-10 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95"
+                             className="w-8 h-8 rounded-full flex items-center justify-center border hover:opacity-90 transition-all active:scale-95"
                              style={isPlaying ? { backgroundColor: 'var(--theme-accentMuted)', borderColor: 'var(--theme-accentDark)', color: 'var(--theme-accent)' } : { backgroundColor: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-textMain)' }}
                           >
-                             {isPlaying ? <Pause size={18} /> : <Play size={18} className="translate-x-[1px]" />}
+                             {isPlaying ? <Pause size={14} /> : <Play size={14} className="translate-x-[1px]" />}
                           </button>
                           <button onClick={handleNext} className="hover:opacity-80 transition-opacity" style={{ color: 'var(--theme-textMain)' }}><SkipForward size={16} /></button>
                       </div>
@@ -1612,7 +1661,7 @@ export default function App() {
                             <X size={16} />
                          </button>
                       </div>
-                   </>
+                   </div>
                 ) : (
                    <div className="w-full h-10 flex items-center justify-center text-[10px] tracking-widest flex-1" style={{ color: 'var(--theme-textDim)' }}>AWAITING TRACK SELECTION</div>
                 )}
