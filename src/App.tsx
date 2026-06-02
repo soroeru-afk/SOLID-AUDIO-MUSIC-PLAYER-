@@ -1188,6 +1188,16 @@ export default function App() {
     });
 
     if (activePlaylistId === playingPlaylistId) {
+      setPlaybackQueue(prev => {
+        const newQueue = [...prev];
+        if (toIndex < 0) toIndex = 0;
+        if (toIndex >= newQueue.length) toIndex = newQueue.length - 1;
+
+        const [itemMove] = newQueue.splice(fromIndex, 1);
+        newQueue.splice(toIndex, 0, itemMove);
+        return newQueue;
+      });
+
       if (currentTrackIndex === fromIndex) {
           setCurrentTrackIndex(toIndex);
       } else if (fromIndex < currentTrackIndex && toIndex >= currentTrackIndex) {
