@@ -104,6 +104,20 @@ const THEMES = [
     accentMuted: '#2d3d25'
   }
 ];
+const getMimeType = (fileName: string, currentMimeType?: string): string => {
+  if (currentMimeType && currentMimeType !== '') {
+    return currentMimeType;
+  }
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.flac')) return 'audio/flac';
+  if (lowerName.endsWith('.m4a')) return 'audio/mp4';
+  if (lowerName.endsWith('.mp3')) return 'audio/mpeg';
+  if (lowerName.endsWith('.wav')) return 'audio/wav';
+  if (lowerName.endsWith('.ogg')) return 'audio/ogg';
+  if (lowerName.endsWith('.aac')) return 'audio/aac';
+  return 'audio/mpeg';
+};
+
 const checkKeyExists = (key: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const request = indexedDB.open('keyval-store');
@@ -530,7 +544,7 @@ export default function App() {
         const buffer = await get(`file_${currentTrack.id}`);
         if (!active) return;
         if (buffer) {
-          let mimeType = currentTrack.mimeType || 'audio/mpeg';
+          const mimeType = getMimeType(currentTrack.fileName, currentTrack.mimeType);
           const blob = new Blob([buffer], { type: mimeType });
           const newUrl = URL.createObjectURL(blob);
           
@@ -804,6 +818,8 @@ export default function App() {
     let coverData: { data: Uint8Array, mimeType: string } | null = null;
     let duration = 0;
 
+    const mimeType = getMimeType(file.name, file.type);
+
     try {
       const metadata = await mm.parseBlob(file, { skipCovers: false });
       title = metadata.common.title || '';
@@ -814,10 +830,10 @@ export default function App() {
 
       const picture = metadata.common.picture?.[0];
       if (picture) {
-        let mimeType = picture.format;
-        if (!mimeType.startsWith('image/')) mimeType = `image/${mimeType}`;
-        coverUrl = URL.createObjectURL(new Blob([picture.data], { type: mimeType }));
-        coverData = { data: picture.data, mimeType };
+        let picMimeType = picture.format;
+        if (!picMimeType.startsWith('image/')) picMimeType = `image/${picMimeType}`;
+        coverUrl = URL.createObjectURL(new Blob([picture.data], { type: picMimeType }));
+        coverData = { data: picture.data, mimeType: picMimeType };
       }
     } catch (err) {
       console.error("Error reading metadata:", file.name, err);
@@ -840,6 +856,8 @@ export default function App() {
       console.error("Failed to save file data to IDB", e);
     }
 
+    const processedFile = file.type ? file : new Blob([file], { type: mimeType });
+
     return {
       id: trackId,
       title,
@@ -848,8 +866,8 @@ export default function App() {
       trackNumber,
       fileName: file.name,
       fileSize: file.size,
-      mimeType: file.type,
-      url: URL.createObjectURL(file),
+      mimeType: mimeType,
+      url: URL.createObjectURL(processedFile),
       duration,
       coverUrl
     };
