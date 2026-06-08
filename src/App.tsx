@@ -289,23 +289,20 @@ export default function App() {
           
           const newLibrary = await Promise.all(savedLibrary.map(async (t: Track) => {
             let blob: Blob | null = null;
-            if (t.file) {
-                blob = t.file;
-            } else {
-                const buffer = await get(`file_${t.id}`);
-                if (buffer) {
-                  let mimeType = t.mimeType || 'audio/mpeg';
-                  // Workaround for IndexedDB dropping MIME types, which breaks FLAC playback in Chrome
-                  if (!mimeType || mimeType === '') {
-                    const lowerName = t.fileName ? t.fileName.toLowerCase() : '';
-                    if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
-                    else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
-                    else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
-                    else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
-                    else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
-                  }
-                  blob = new Blob([buffer], { type: mimeType });
-                }
+            // Always restore from IndexedDB buffer because t.file references are invalid across sessions
+            const buffer = await get(`file_${t.id}`);
+            if (buffer) {
+              let mimeType = t.mimeType || 'audio/mpeg';
+              // Workaround for IndexedDB dropping MIME types, which breaks FLAC playback in Chrome
+              if (!mimeType || mimeType === '') {
+                const lowerName = t.fileName ? t.fileName.toLowerCase() : '';
+                if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
+                else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
+                else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
+                else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
+                else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
+              }
+              blob = new Blob([buffer], { type: mimeType });
             }
 
             if (blob) {
@@ -373,8 +370,20 @@ export default function App() {
   // Save to IndexedDB
   useEffect(() => {
     if (isInitialized) {
-      set('solidLibrary', library).catch(console.error);
-      set('solidPlaylists', playlists).catch(console.error);
+      // Exclude File references when saving to IDB since they cannot be restored across sessions.
+      const cleanLibrary = library.map(t => {
+        const { file, ...rest } = t;
+        return rest;
+      });
+      const cleanPlaylists = playlists.map(p => ({
+        ...p,
+        tracks: p.tracks.map(t => {
+          const { file, ...rest } = t;
+          return rest;
+        })
+      }));
+      set('solidLibrary', cleanLibrary).catch(console.error);
+      set('solidPlaylists', cleanPlaylists).catch(console.error);
     }
   }, [library, playlists, isInitialized]);
 
