@@ -1,4 +1,4 @@
-const CACHE_NAME = 'solid-audio-cache-v7';
+const CACHE_NAME = 'solid-audio-cache-v8';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -31,6 +31,9 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') {
+    return;
+  }
   const url = new URL(event.request.url);
   if (!url.protocol.startsWith('http')) {
     return; // Skip intercepting non-http/https requests like chrome-extension://

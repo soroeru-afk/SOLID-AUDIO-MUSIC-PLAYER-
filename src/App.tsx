@@ -104,6 +104,26 @@ const THEMES = [
     accentMuted: '#2d3d25'
   }
 ];
+const checkKeyExists = (key: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    const request = indexedDB.open('keyval-store');
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const tx = db.transaction('keyval', 'readonly');
+        const store = tx.objectStore('keyval');
+        const getReq = store.getKey(key);
+        getReq.onsuccess = () => {
+          resolve(getReq.result !== undefined);
+        };
+        getReq.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
+    };
+    request.onerror = () => resolve(false);
+  });
+};
 
 // --- Utils ---
 const formatTime = (seconds: number) => {
@@ -292,62 +312,21 @@ export default function App() {
             t.url = '';
             t.coverUrl = undefined;
 
-            let blob: Blob | null = null;
-            // Always restore from IndexedDB buffer because t.file references are invalid across sessions
-            const buffer = await get(`file_${t.id}`);
-            if (buffer) {
-              let mimeType = t.mimeType || 'audio/mpeg';
-              // Workaround for IndexedDB dropping MIME types, which breaks FLAC playback in Chrome
-              if (!mimeType || mimeType === '') {
-                const lowerName = t.fileName ? t.fileName.toLowerCase() : '';
-                if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
-                else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
-                else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
-                else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
-                else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
+            // Instantly check if we have the file data in IDB (avoid loading massive buffer)
+            const fileExists = await checkKeyExists(`file_${t.id}`);
+            t.missing = !fileExists;
+
+            // Load cover art from IDB cover key if it exists
+            try {
+              const coverObj = await get(`cover_${t.id}`);
+              if (coverObj && coverObj.data) {
+                const coverBlob = new Blob([coverObj.data], { type: coverObj.mimeType || 'image/jpeg' });
+                t.coverUrl = URL.createObjectURL(coverBlob);
               }
-              blob = new Blob([buffer], { type: mimeType });
+            } catch (e) {
+              console.error('Failed to restore cover URL from IDB', t.fileName, e);
             }
 
-            if (blob) {
-              // File data exists in this browser's IndexedDB — re-extract everything
-              try {
-                if (blob instanceof File && (!blob.type || blob.type === '')) {
-                  let mimeType = 'audio/mpeg';
-                  const lowerName = t.fileName ? t.fileName.toLowerCase() : '';
-                  if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
-                  else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
-                  else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
-                  else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
-                  else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
-                  blob = new File([blob], t.fileName || 'audio', { type: mimeType });
-                }
-
-                t.url = URL.createObjectURL(blob);
-                const meta = await mm.parseBlob(blob, { skipCovers: false });
-                if (meta.common.title) t.title = meta.common.title;
-                if (meta.common.artist || meta.common.albumartist)
-                  t.artist = meta.common.artist || meta.common.albumartist || t.artist;
-                if (meta.common.album) t.album = meta.common.album;
-                if (meta.common.track?.no) t.trackNumber = meta.common.track.no.toString();
-                if (meta.format.duration) t.duration = meta.format.duration;
-                const picture = meta.common.picture?.[0];
-                if (picture) {
-                  let mimeType = picture.format;
-                  if (!mimeType.startsWith('image/')) mimeType = `image/${mimeType}`;
-                  t.coverUrl = URL.createObjectURL(new Blob([picture.data], { type: mimeType }));
-                }
-              } catch (e) {
-                console.error('Re-extract metadata failed', t.fileName, e);
-                t.missing = true;
-              }
-            } else {
-              // No file data — this track was saved on a different PC/browser or data was lost
-              // Keep metadata (title/artist/album) but mark as missing so UI can show it
-              t.missing = true;
-              t.url = '';
-              t.coverUrl = undefined;
-            }
             libraryMap.set(t.id, t);
             return t;
           }));
@@ -390,6 +369,38 @@ export default function App() {
       set('solidPlaylists', cleanPlaylists).catch(console.error);
     }
   }, [library, playlists, isInitialized]);
+
+  // Load track audio blob URL lazily when currentTrack changes
+  useEffect(() => {
+    if (!currentTrack) return;
+    if (currentTrack.url && currentTrack.url.startsWith('blob:')) return;
+
+    let active = true;
+    const loadTrackBlob = async () => {
+      try {
+        const buffer = await get(`file_${currentTrack.id}`);
+        if (!active) return;
+        if (buffer) {
+          let mimeType = currentTrack.mimeType || 'audio/mpeg';
+          const blob = new Blob([buffer], { type: mimeType });
+          const newUrl = URL.createObjectURL(blob);
+          
+          setLibrary(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+          setPlaylists(prev => prev.map(p => ({
+            ...p,
+            tracks: p.tracks.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t)
+          })));
+          setPlaybackQueue(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+        }
+      } catch (err) {
+        console.error("Failed to load audio buffer lazily", err);
+      }
+    };
+    loadTrackBlob();
+    return () => {
+      active = false;
+    };
+  }, [currentTrack?.id]);
 
   // Player state
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
@@ -748,6 +759,7 @@ export default function App() {
     const idsSet = new Set(trackIdsToDelete);
     for (const id of trackIdsToDelete) {
       del(`file_${id}`).catch(console.error);
+      del(`cover_${id}`).catch(console.error);
     }
 
     // Filter library
@@ -788,6 +800,7 @@ export default function App() {
     let album = 'Unknown Album';
     let trackNumber = '';
     let coverUrl: string | undefined = undefined;
+    let coverData: { data: Uint8Array, mimeType: string } | null = null;
     let duration = 0;
 
     try {
@@ -803,6 +816,7 @@ export default function App() {
         let mimeType = picture.format;
         if (!mimeType.startsWith('image/')) mimeType = `image/${mimeType}`;
         coverUrl = URL.createObjectURL(new Blob([picture.data], { type: mimeType }));
+        coverData = { data: picture.data, mimeType };
       }
     } catch (err) {
       console.error("Error reading metadata:", file.name, err);
@@ -818,6 +832,9 @@ export default function App() {
     try {
       const buffer = await file.arrayBuffer();
       await set(`file_${trackId}`, buffer);
+      if (coverData) {
+        await set(`cover_${trackId}`, coverData);
+      }
     } catch (e) {
       console.error("Failed to save file data to IDB", e);
     }
