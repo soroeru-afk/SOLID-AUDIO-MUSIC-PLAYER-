@@ -1,4 +1,4 @@
-const CACHE_NAME = 'solid-audio-cache-v3';
+const CACHE_NAME = 'solid-audio-cache-v4';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -7,6 +7,7 @@ self.addEventListener('install', (event) => {
         './',
         './index.html',
         './icon.svg',
+        './icon.png',
         './manifest.json'
       ]).catch(err => console.log('Cache addAll failed:', err));
     })

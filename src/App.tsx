@@ -19,8 +19,6 @@ interface Track {
   fileName: string;
   url: string;
   file?: File;
-  fileSize?: number;
-  mimeType?: string;
   duration: number;
   coverUrl?: string;
   missing?: boolean; // true when file blob is not available (e.g. different PC)
@@ -288,19 +286,26 @@ export default function App() {
           const libraryMap = new Map<string, Track>();
           
           const newLibrary = await Promise.all(savedLibrary.map(async (t: Track) => {
-            let blob: Blob | null = null;
             if (t.file) {
-                blob = t.file;
-            } else {
-                const buffer = await get(`file_${t.id}`);
-                if (buffer) blob = new Blob([buffer], { type: t.mimeType || 'audio/mpeg' });
-            }
-
-            if (blob) {
-              // File data exists in this browser's IndexedDB — re-extract everything
+              // File blob exists in this browser's IndexedDB — re-extract everything
               try {
-                t.url = URL.createObjectURL(blob);
-                const meta = await mm.parseBlob(blob, { skipCovers: false });
+                let fileBlob = t.file;
+                // Workaround for IndexedDB dropping MIME types, which breaks FLAC playback in Chrome
+                if (!fileBlob.type || fileBlob.type === '') {
+                  let mimeType = 'audio/mpeg';
+                  const lowerName = t.fileName ? t.fileName.toLowerCase() : '';
+                  if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
+                  else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
+                  else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
+                  else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
+                  else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
+                  fileBlob = new File([t.file], t.fileName || 'audio', { type: mimeType });
+                  // Replace old file with reconstructed File that has a proper type
+                  t.file = fileBlob;
+                }
+                
+                t.url = URL.createObjectURL(fileBlob);
+                const meta = await mm.parseBlob(fileBlob, { skipCovers: false });
                 if (meta.common.title) t.title = meta.common.title;
                 if (meta.common.artist || meta.common.albumartist)
                   t.artist = meta.common.artist || meta.common.albumartist || t.artist;
@@ -318,7 +323,7 @@ export default function App() {
                 t.missing = true;
               }
             } else {
-              // No file data — this track was saved on a different PC/browser or data was lost
+              // No file blob — this track was saved on a different PC/browser
               // Keep metadata (title/artist/album) but mark as missing so UI can show it
               t.missing = true;
               t.url = '';
@@ -687,8 +692,8 @@ export default function App() {
     
     library.forEach(track => {
       let key = '';
-      if (track.fileSize || (track.file && track.file.size)) {
-        key = `file::${track.fileName.toLowerCase()}::${track.fileSize || track.file?.size}`;
+      if (track.file && track.file.size) {
+        key = `file::${track.fileName.toLowerCase()}::${track.file.size}`;
       } else if (track.title && track.title !== 'Unknown Title' && track.artist && track.artist !== 'Unknown Artist') {
         key = `meta::${track.title.toLowerCase()}::${track.artist.toLowerCase()}`;
       } else {
@@ -710,9 +715,6 @@ export default function App() {
     if (trackIdsToDelete.length === 0) return;
 
     const idsSet = new Set(trackIdsToDelete);
-    for (const id of trackIdsToDelete) {
-      del(`file_${id}`).catch(console.error);
-    }
 
     // Filter library
     const newLibrary = library.filter(t => !idsSet.has(t.id));
@@ -778,24 +780,33 @@ export default function App() {
       if (artist === 'Unknown Artist') artist = parsed.artist;
     }
 
-    const trackId = uuidv4();
+    let blobUrl = '';
+    let processedFile = file;
     try {
-      const buffer = await file.arrayBuffer();
-      await set(`file_${trackId}`, buffer);
+      if (!processedFile.type || processedFile.type === '') {
+        let mimeType = 'audio/mpeg';
+        const lowerName = file.name ? file.name.toLowerCase() : '';
+        if (lowerName.endsWith('.flac')) mimeType = 'audio/flac';
+        else if (lowerName.endsWith('.m4a')) mimeType = 'audio/mp4';
+        else if (lowerName.endsWith('.wav')) mimeType = 'audio/wav';
+        else if (lowerName.endsWith('.ogg')) mimeType = 'audio/ogg';
+        else if (lowerName.endsWith('.aac')) mimeType = 'audio/aac';
+        processedFile = new File([file], file.name, { type: mimeType, lastModified: file.lastModified });
+      }
+      blobUrl = URL.createObjectURL(processedFile);
     } catch (e) {
-      console.error("Failed to save file data to IDB", e);
+      blobUrl = URL.createObjectURL(file);
     }
 
     return {
-      id: trackId,
+      id: uuidv4(),
       title,
       artist,
       album,
       trackNumber,
       fileName: file.name,
-      fileSize: file.size,
-      mimeType: file.type,
-      url: URL.createObjectURL(file),
+      url: blobUrl,
+      file: processedFile,
       duration,
       coverUrl
     };
@@ -824,14 +835,14 @@ export default function App() {
       if (valid.length > 0) {
         setLibrary(prev => {
           // Deduplicate by fileName + file size to avoid double-adding on re-read
-          const existingKeys = new Set(prev.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
+          const existingKeys = new Set(prev.map(t => `${t.fileName}_${t.file?.size ?? 0}`));
+          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.file?.size ?? 0}`));
           return [...prev, ...fresh];
         });
         setPlaylists(prev => prev.map(p => {
           if (p.id !== 'all-tracks' && p.id !== activePlaylistId) return p;
-          const existingKeys = new Set(p.tracks.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
+          const existingKeys = new Set(p.tracks.map(t => `${t.fileName}_${t.file?.size ?? 0}`));
+          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.file?.size ?? 0}`));
           if (fresh.length === 0) return p;
           return { ...p, tracks: [...p.tracks, ...fresh] };
         }));
@@ -1041,8 +1052,6 @@ export default function App() {
       return;
     }
 
-    unlockAudio();
-
     // Snapshot the current view as the playback queue
     setPlaybackQueue(displayTracks);
     setPlayingPlaylistId(activePlaylistId);
@@ -1069,8 +1078,6 @@ export default function App() {
 
   const handleNext = () => {
     if (playbackQueue.length === 0) return;
-    
-    unlockAudio();
     
     if (repeatMode === 2) {
       if (audioRef.current) {
@@ -1116,8 +1123,6 @@ export default function App() {
       return;
     }
     if (playbackQueue.length === 0 || currentTrackIndex === -1) return;
-    
-    unlockAudio();
     
     let prevIndex = currentTrackIndex - 1;
     if (prevIndex < 0) {
@@ -1424,7 +1429,6 @@ export default function App() {
       {/* Hidden Inputs */}
       <audio 
         ref={audioRef} 
-        playsInline 
         src={currentTrack?.url} 
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
