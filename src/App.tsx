@@ -6,7 +6,7 @@ import {
   Minimize2, Maximize2, Layers, Minus, PanelTop, GripVertical
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { get, set, del } from 'idb-keyval';
+import { get, set, del, keys } from 'idb-keyval';
 import * as mm from 'music-metadata-browser';
 
 // --- Types ---
@@ -116,27 +116,6 @@ const getMimeType = (fileName: string, currentMimeType?: string): string => {
   if (lowerName.endsWith('.ogg')) return 'audio/ogg';
   if (lowerName.endsWith('.aac')) return 'audio/aac';
   return 'audio/mpeg';
-};
-
-const checkKeyExists = (key: string): Promise<boolean> => {
-  return new Promise((resolve) => {
-    const request = indexedDB.open('keyval-store');
-    request.onsuccess = () => {
-      const db = request.result;
-      try {
-        const tx = db.transaction('keyval', 'readonly');
-        const store = tx.objectStore('keyval');
-        const getReq = store.getKey(key);
-        getReq.onsuccess = () => {
-          resolve(getReq.result !== undefined);
-        };
-        getReq.onerror = () => resolve(false);
-      } catch (e) {
-        resolve(false);
-      }
-    };
-    request.onerror = () => resolve(false);
-  });
 };
 
 // --- Utils ---
@@ -319,6 +298,7 @@ export default function App() {
         const savedPlaylists = await get('solidPlaylists');
         
         if (savedLibrary && savedPlaylists) {
+          const allDbKeys = await keys();
           const libraryMap = new Map<string, Track>();
           
           const newLibrary = await Promise.all(savedLibrary.map(async (t: Track) => {
@@ -327,18 +307,20 @@ export default function App() {
             t.coverUrl = undefined;
 
             // Instantly check if we have the file data in IDB (avoid loading massive buffer)
-            const fileExists = await checkKeyExists(`file_${t.id}`);
+            const fileExists = allDbKeys.includes(`file_${t.id}`);
             t.missing = !fileExists;
 
             // Load cover art from IDB cover key if it exists
-            try {
-              const coverObj = await get(`cover_${t.id}`);
-              if (coverObj && coverObj.data) {
-                const coverBlob = new Blob([coverObj.data], { type: coverObj.mimeType || 'image/jpeg' });
-                t.coverUrl = URL.createObjectURL(coverBlob);
+            if (allDbKeys.includes(`cover_${t.id}`)) {
+              try {
+                const coverObj = await get(`cover_${t.id}`);
+                if (coverObj && coverObj.data) {
+                  const coverBlob = new Blob([coverObj.data], { type: coverObj.mimeType || 'image/jpeg' });
+                  t.coverUrl = URL.createObjectURL(coverBlob);
+                }
+              } catch (e) {
+                console.error('Failed to restore cover URL from IDB', t.fileName, e);
               }
-            } catch (e) {
-              console.error('Failed to restore cover URL from IDB', t.fileName, e);
             }
 
             libraryMap.set(t.id, t);
@@ -348,7 +330,17 @@ export default function App() {
           const newPlaylists = savedPlaylists.map((p: Playlist) => ({
             ...p,
             tracks: p.tracks.map((t: Track) => {
-              return libraryMap.get(t.id) || t;
+              const matched = libraryMap.get(t.id);
+              if (matched) {
+                return matched;
+              } else {
+                return {
+                  ...t,
+                  url: '',
+                  coverUrl: undefined,
+                  missing: true
+                };
+              }
             })
           }));
           
