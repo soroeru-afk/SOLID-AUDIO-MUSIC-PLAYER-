@@ -288,6 +288,10 @@ export default function App() {
           const libraryMap = new Map<string, Track>();
           
           const newLibrary = await Promise.all(savedLibrary.map(async (t: Track) => {
+            // Reset temporary blob URLs from the previous session before re-generating them
+            t.url = '';
+            t.coverUrl = undefined;
+
             let blob: Blob | null = null;
             // Always restore from IndexedDB buffer because t.file references are invalid across sessions
             const buffer = await get(`file_${t.id}`);
