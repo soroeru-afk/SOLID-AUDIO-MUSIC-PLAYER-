@@ -805,7 +805,7 @@ export default function App() {
   };
 
   // Parse a single audio file into a Track object
-  const parseSingleFile = async (file: File): Promise<Track | null> => {
+  const parseSingleFile = async (file: File, existingTracks: Track[]): Promise<Track | null> => {
     const isAudio = ['audio/mpeg', 'audio/wav', 'audio/flac', 'audio/ogg', 'audio/x-m4a', 'audio/mp4', 'audio/aac'].includes(file.type) ||
                     ['.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac'].some(ext => file.name.toLowerCase().endsWith(ext));
     if (!isAudio) return null;
@@ -845,7 +845,12 @@ export default function App() {
       if (artist === 'Unknown Artist') artist = parsed.artist;
     }
 
-    const trackId = uuidv4();
+    // Check if this file is already in the library to reuse its ID
+    const existingTrack = existingTracks.find(
+      t => t.fileName === file.name && (t.fileSize === file.size || t.file?.size === file.size)
+    );
+    const trackId = existingTrack ? existingTrack.id : uuidv4();
+
     try {
       const buffer = await file.arrayBuffer();
       await set(`file_${trackId}`, buffer);
@@ -887,7 +892,7 @@ export default function App() {
 
     for (let i = 0; i < fileArray.length; i += BATCH_SIZE) {
       const batch = fileArray.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(batch.map(f => parseSingleFile(f)));
+      const results = await Promise.all(batch.map(f => parseSingleFile(f, [...library, ...allTracks])));
       const valid = results.filter((t): t is Track => t !== null);
       allTracks.push(...valid);
       setLoadingProgress(prev => ({ ...prev, done: Math.min(prev.total, i + BATCH_SIZE) }));
@@ -895,17 +900,69 @@ export default function App() {
       // Stream results into state as each batch completes so the list fills progressively
       if (valid.length > 0) {
         setLibrary(prev => {
-          // Deduplicate by fileName + file size to avoid double-adding on re-read
-          const existingKeys = new Set(prev.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
-          return [...prev, ...fresh];
+          const validMap = new Map<string, Track>();
+          valid.forEach(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            validMap.set(key, t);
+          });
+
+          const updatedKeys = new Set<string>();
+          const updatedLibrary = prev.map(t => {
+            const key = `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`;
+            const newTrack = validMap.get(key);
+            if (newTrack) {
+              updatedKeys.add(key);
+              return {
+                ...t,
+                id: t.id,
+                url: newTrack.url,
+                coverUrl: newTrack.coverUrl,
+                missing: false
+              };
+            }
+            return t;
+          });
+
+          const fresh = valid.filter(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            return !updatedKeys.has(key) && !prev.some(ex => `${ex.fileName}_${ex.fileSize ?? ex.file?.size ?? 0}` === key);
+          });
+
+          return [...updatedLibrary, ...fresh];
         });
+
         setPlaylists(prev => prev.map(p => {
           if (p.id !== 'all-tracks' && p.id !== activePlaylistId) return p;
-          const existingKeys = new Set(p.tracks.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
-          if (fresh.length === 0) return p;
-          return { ...p, tracks: [...p.tracks, ...fresh] };
+          
+          const validMap = new Map<string, Track>();
+          valid.forEach(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            validMap.set(key, t);
+          });
+
+          const updatedKeys = new Set<string>();
+          const updatedTracks = p.tracks.map(t => {
+            const key = `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`;
+            const newTrack = validMap.get(key);
+            if (newTrack) {
+              updatedKeys.add(key);
+              return {
+                ...t,
+                id: t.id,
+                url: newTrack.url,
+                coverUrl: newTrack.coverUrl,
+                missing: false
+              };
+            }
+            return t;
+          });
+
+          const fresh = valid.filter(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            return !updatedKeys.has(key) && !p.tracks.some(ex => `${ex.fileName}_${ex.fileSize ?? ex.file?.size ?? 0}` === key);
+          });
+
+          return { ...p, tracks: [...updatedTracks, ...fresh] };
         }));
       }
     }
