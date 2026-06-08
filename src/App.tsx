@@ -370,37 +370,6 @@ export default function App() {
     }
   }, [library, playlists, isInitialized]);
 
-  // Load track audio blob URL lazily when currentTrack changes
-  useEffect(() => {
-    if (!currentTrack) return;
-    if (currentTrack.url && currentTrack.url.startsWith('blob:')) return;
-
-    let active = true;
-    const loadTrackBlob = async () => {
-      try {
-        const buffer = await get(`file_${currentTrack.id}`);
-        if (!active) return;
-        if (buffer) {
-          let mimeType = currentTrack.mimeType || 'audio/mpeg';
-          const blob = new Blob([buffer], { type: mimeType });
-          const newUrl = URL.createObjectURL(blob);
-          
-          setLibrary(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
-          setPlaylists(prev => prev.map(p => ({
-            ...p,
-            tracks: p.tracks.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t)
-          })));
-          setPlaybackQueue(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
-        }
-      } catch (err) {
-        console.error("Failed to load audio buffer lazily", err);
-      }
-    };
-    loadTrackBlob();
-    return () => {
-      active = false;
-    };
-  }, [currentTrack?.id]);
 
   // Player state
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
@@ -549,6 +518,38 @@ export default function App() {
     t.fileName.toLowerCase().includes(searchQuery.toLowerCase())
   ));
   const currentTrack = playbackQueue[currentTrackIndex] || null;
+
+  // Load track audio blob URL lazily when currentTrack changes
+  useEffect(() => {
+    if (!currentTrack) return;
+    if (currentTrack.url && currentTrack.url.startsWith('blob:')) return;
+
+    let active = true;
+    const loadTrackBlob = async () => {
+      try {
+        const buffer = await get(`file_${currentTrack.id}`);
+        if (!active) return;
+        if (buffer) {
+          let mimeType = currentTrack.mimeType || 'audio/mpeg';
+          const blob = new Blob([buffer], { type: mimeType });
+          const newUrl = URL.createObjectURL(blob);
+          
+          setLibrary(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+          setPlaylists(prev => prev.map(p => ({
+            ...p,
+            tracks: p.tracks.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t)
+          })));
+          setPlaybackQueue(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+        }
+      } catch (err) {
+        console.error("Failed to load audio buffer lazily", err);
+      }
+    };
+    loadTrackBlob();
+    return () => {
+      active = false;
+    };
+  }, [currentTrack?.id]);
 
   // Track window resizing manually in full mode
   useEffect(() => {
