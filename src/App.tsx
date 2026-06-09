@@ -6,7 +6,7 @@ import {
   Minimize2, Maximize2, Layers, Minus, PanelTop, GripVertical
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { get, set, del } from 'idb-keyval';
+import { get, set, del, keys } from 'idb-keyval';
 import * as mm from 'music-metadata-browser';
 
 // --- Types ---
@@ -104,6 +104,19 @@ const THEMES = [
     accentMuted: '#2d3d25'
   }
 ];
+const getMimeType = (fileName: string, currentMimeType?: string): string => {
+  if (currentMimeType && currentMimeType !== '') {
+    return currentMimeType;
+  }
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.flac')) return 'audio/flac';
+  if (lowerName.endsWith('.m4a')) return 'audio/mp4';
+  if (lowerName.endsWith('.mp3')) return 'audio/mpeg';
+  if (lowerName.endsWith('.wav')) return 'audio/wav';
+  if (lowerName.endsWith('.ogg')) return 'audio/ogg';
+  if (lowerName.endsWith('.aac')) return 'audio/aac';
+  return 'audio/mpeg';
+};
 
 // --- Utils ---
 const formatTime = (seconds: number) => {
@@ -285,45 +298,31 @@ export default function App() {
         const savedPlaylists = await get('solidPlaylists');
         
         if (savedLibrary && savedPlaylists) {
+          const allDbKeys = await keys();
           const libraryMap = new Map<string, Track>();
           
           const newLibrary = await Promise.all(savedLibrary.map(async (t: Track) => {
-            let blob: Blob | null = null;
-            if (t.file) {
-                blob = t.file;
-            } else {
-                const buffer = await get(`file_${t.id}`);
-                if (buffer) blob = new Blob([buffer], { type: t.mimeType || 'audio/mpeg' });
-            }
+            // Reset temporary blob URLs from the previous session before re-generating them
+            t.url = '';
+            t.coverUrl = undefined;
 
-            if (blob) {
-              // File data exists in this browser's IndexedDB — re-extract everything
+            // Instantly check if we have the file data in IDB (avoid loading massive buffer)
+            const fileExists = allDbKeys.includes(`file_${t.id}`);
+            t.missing = !fileExists;
+
+            // Load cover art from IDB cover key if it exists
+            if (allDbKeys.includes(`cover_${t.id}`)) {
               try {
-                t.url = URL.createObjectURL(blob);
-                const meta = await mm.parseBlob(blob, { skipCovers: false });
-                if (meta.common.title) t.title = meta.common.title;
-                if (meta.common.artist || meta.common.albumartist)
-                  t.artist = meta.common.artist || meta.common.albumartist || t.artist;
-                if (meta.common.album) t.album = meta.common.album;
-                if (meta.common.track?.no) t.trackNumber = meta.common.track.no.toString();
-                if (meta.format.duration) t.duration = meta.format.duration;
-                const picture = meta.common.picture?.[0];
-                if (picture) {
-                  let mimeType = picture.format;
-                  if (!mimeType.startsWith('image/')) mimeType = `image/${mimeType}`;
-                  t.coverUrl = URL.createObjectURL(new Blob([picture.data], { type: mimeType }));
+                const coverObj = await get(`cover_${t.id}`);
+                if (coverObj && coverObj.data) {
+                  const coverBlob = new Blob([coverObj.data], { type: coverObj.mimeType || 'image/jpeg' });
+                  t.coverUrl = URL.createObjectURL(coverBlob);
                 }
               } catch (e) {
-                console.error('Re-extract metadata failed', t.fileName, e);
-                t.missing = true;
+                console.error('Failed to restore cover URL from IDB', t.fileName, e);
               }
-            } else {
-              // No file data — this track was saved on a different PC/browser or data was lost
-              // Keep metadata (title/artist/album) but mark as missing so UI can show it
-              t.missing = true;
-              t.url = '';
-              t.coverUrl = undefined;
             }
+
             libraryMap.set(t.id, t);
             return t;
           }));
@@ -331,7 +330,17 @@ export default function App() {
           const newPlaylists = savedPlaylists.map((p: Playlist) => ({
             ...p,
             tracks: p.tracks.map((t: Track) => {
-              return libraryMap.get(t.id) || t;
+              const matched = libraryMap.get(t.id);
+              if (matched) {
+                return matched;
+              } else {
+                return {
+                  ...t,
+                  url: '',
+                  coverUrl: undefined,
+                  missing: true
+                };
+              }
             })
           }));
           
@@ -350,10 +359,23 @@ export default function App() {
   // Save to IndexedDB
   useEffect(() => {
     if (isInitialized) {
-      set('solidLibrary', library).catch(console.error);
-      set('solidPlaylists', playlists).catch(console.error);
+      // Exclude File references when saving to IDB since they cannot be restored across sessions.
+      const cleanLibrary = library.map(t => {
+        const { file, ...rest } = t;
+        return rest;
+      });
+      const cleanPlaylists = playlists.map(p => ({
+        ...p,
+        tracks: p.tracks.map(t => {
+          const { file, ...rest } = t;
+          return rest;
+        })
+      }));
+      set('solidLibrary', cleanLibrary).catch(console.error);
+      set('solidPlaylists', cleanPlaylists).catch(console.error);
     }
   }, [library, playlists, isInitialized]);
+
 
   // Player state
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
@@ -502,6 +524,38 @@ export default function App() {
     t.fileName.toLowerCase().includes(searchQuery.toLowerCase())
   ));
   const currentTrack = playbackQueue[currentTrackIndex] || null;
+
+  // Load track audio blob URL lazily when currentTrack changes
+  useEffect(() => {
+    if (!currentTrack) return;
+    if (currentTrack.url && currentTrack.url.startsWith('blob:')) return;
+
+    let active = true;
+    const loadTrackBlob = async () => {
+      try {
+        const buffer = await get(`file_${currentTrack.id}`);
+        if (!active) return;
+        if (buffer) {
+          const mimeType = getMimeType(currentTrack.fileName, currentTrack.mimeType);
+          const blob = new Blob([buffer], { type: mimeType });
+          const newUrl = URL.createObjectURL(blob);
+          
+          setLibrary(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+          setPlaylists(prev => prev.map(p => ({
+            ...p,
+            tracks: p.tracks.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t)
+          })));
+          setPlaybackQueue(prev => prev.map(t => t.id === currentTrack.id ? { ...t, url: newUrl } : t));
+        }
+      } catch (err) {
+        console.error("Failed to load audio buffer lazily", err);
+      }
+    };
+    loadTrackBlob();
+    return () => {
+      active = false;
+    };
+  }, [currentTrack?.id]);
 
   // Track window resizing manually in full mode
   useEffect(() => {
@@ -712,6 +766,7 @@ export default function App() {
     const idsSet = new Set(trackIdsToDelete);
     for (const id of trackIdsToDelete) {
       del(`file_${id}`).catch(console.error);
+      del(`cover_${id}`).catch(console.error);
     }
 
     // Filter library
@@ -742,7 +797,7 @@ export default function App() {
   };
 
   // Parse a single audio file into a Track object
-  const parseSingleFile = async (file: File): Promise<Track | null> => {
+  const parseSingleFile = async (file: File, existingTracks: Track[]): Promise<Track | null> => {
     const isAudio = ['audio/mpeg', 'audio/wav', 'audio/flac', 'audio/ogg', 'audio/x-m4a', 'audio/mp4', 'audio/aac'].includes(file.type) ||
                     ['.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac'].some(ext => file.name.toLowerCase().endsWith(ext));
     if (!isAudio) return null;
@@ -752,7 +807,10 @@ export default function App() {
     let album = 'Unknown Album';
     let trackNumber = '';
     let coverUrl: string | undefined = undefined;
+    let coverData: { data: Uint8Array, mimeType: string } | null = null;
     let duration = 0;
+
+    const mimeType = getMimeType(file.name, file.type);
 
     try {
       const metadata = await mm.parseBlob(file, { skipCovers: false });
@@ -764,9 +822,10 @@ export default function App() {
 
       const picture = metadata.common.picture?.[0];
       if (picture) {
-        let mimeType = picture.format;
-        if (!mimeType.startsWith('image/')) mimeType = `image/${mimeType}`;
-        coverUrl = URL.createObjectURL(new Blob([picture.data], { type: mimeType }));
+        let picMimeType = picture.format;
+        if (!picMimeType.startsWith('image/')) picMimeType = `image/${picMimeType}`;
+        coverUrl = URL.createObjectURL(new Blob([picture.data], { type: picMimeType }));
+        coverData = { data: picture.data, mimeType: picMimeType };
       }
     } catch (err) {
       console.error("Error reading metadata:", file.name, err);
@@ -778,13 +837,23 @@ export default function App() {
       if (artist === 'Unknown Artist') artist = parsed.artist;
     }
 
-    const trackId = uuidv4();
+    // Check if this file is already in the library to reuse its ID
+    const existingTrack = existingTracks.find(
+      t => t.fileName === file.name && (t.fileSize === file.size || t.file?.size === file.size)
+    );
+    const trackId = existingTrack ? existingTrack.id : uuidv4();
+
     try {
       const buffer = await file.arrayBuffer();
       await set(`file_${trackId}`, buffer);
+      if (coverData) {
+        await set(`cover_${trackId}`, coverData);
+      }
     } catch (e) {
       console.error("Failed to save file data to IDB", e);
     }
+
+    const processedFile = file.type ? file : new Blob([file], { type: mimeType });
 
     return {
       id: trackId,
@@ -794,8 +863,8 @@ export default function App() {
       trackNumber,
       fileName: file.name,
       fileSize: file.size,
-      mimeType: file.type,
-      url: URL.createObjectURL(file),
+      mimeType: mimeType,
+      url: URL.createObjectURL(processedFile),
       duration,
       coverUrl
     };
@@ -815,7 +884,7 @@ export default function App() {
 
     for (let i = 0; i < fileArray.length; i += BATCH_SIZE) {
       const batch = fileArray.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(batch.map(f => parseSingleFile(f)));
+      const results = await Promise.all(batch.map(f => parseSingleFile(f, [...library, ...allTracks])));
       const valid = results.filter((t): t is Track => t !== null);
       allTracks.push(...valid);
       setLoadingProgress(prev => ({ ...prev, done: Math.min(prev.total, i + BATCH_SIZE) }));
@@ -823,17 +892,69 @@ export default function App() {
       // Stream results into state as each batch completes so the list fills progressively
       if (valid.length > 0) {
         setLibrary(prev => {
-          // Deduplicate by fileName + file size to avoid double-adding on re-read
-          const existingKeys = new Set(prev.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
-          return [...prev, ...fresh];
+          const validMap = new Map<string, Track>();
+          valid.forEach(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            validMap.set(key, t);
+          });
+
+          const updatedKeys = new Set<string>();
+          const updatedLibrary = prev.map(t => {
+            const key = `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`;
+            const newTrack = validMap.get(key);
+            if (newTrack) {
+              updatedKeys.add(key);
+              return {
+                ...t,
+                id: t.id,
+                url: newTrack.url,
+                coverUrl: newTrack.coverUrl,
+                missing: false
+              };
+            }
+            return t;
+          });
+
+          const fresh = valid.filter(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            return !updatedKeys.has(key) && !prev.some(ex => `${ex.fileName}_${ex.fileSize ?? ex.file?.size ?? 0}` === key);
+          });
+
+          return [...updatedLibrary, ...fresh];
         });
+
         setPlaylists(prev => prev.map(p => {
           if (p.id !== 'all-tracks' && p.id !== activePlaylistId) return p;
-          const existingKeys = new Set(p.tracks.map(t => `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`));
-          const fresh = valid.filter(t => !existingKeys.has(`${t.fileName}_${t.fileSize ?? 0}`));
-          if (fresh.length === 0) return p;
-          return { ...p, tracks: [...p.tracks, ...fresh] };
+          
+          const validMap = new Map<string, Track>();
+          valid.forEach(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            validMap.set(key, t);
+          });
+
+          const updatedKeys = new Set<string>();
+          const updatedTracks = p.tracks.map(t => {
+            const key = `${t.fileName}_${t.fileSize ?? t.file?.size ?? 0}`;
+            const newTrack = validMap.get(key);
+            if (newTrack) {
+              updatedKeys.add(key);
+              return {
+                ...t,
+                id: t.id,
+                url: newTrack.url,
+                coverUrl: newTrack.coverUrl,
+                missing: false
+              };
+            }
+            return t;
+          });
+
+          const fresh = valid.filter(t => {
+            const key = `${t.fileName}_${t.fileSize ?? 0}`;
+            return !updatedKeys.has(key) && !p.tracks.some(ex => `${ex.fileName}_${ex.fileSize ?? ex.file?.size ?? 0}` === key);
+          });
+
+          return { ...p, tracks: [...updatedTracks, ...fresh] };
         }));
       }
     }
@@ -1041,8 +1162,6 @@ export default function App() {
       return;
     }
 
-    unlockAudio();
-
     // Snapshot the current view as the playback queue
     setPlaybackQueue(displayTracks);
     setPlayingPlaylistId(activePlaylistId);
@@ -1069,8 +1188,6 @@ export default function App() {
 
   const handleNext = () => {
     if (playbackQueue.length === 0) return;
-    
-    unlockAudio();
     
     if (repeatMode === 2) {
       if (audioRef.current) {
@@ -1116,8 +1233,6 @@ export default function App() {
       return;
     }
     if (playbackQueue.length === 0 || currentTrackIndex === -1) return;
-    
-    unlockAudio();
     
     let prevIndex = currentTrackIndex - 1;
     if (prevIndex < 0) {
@@ -1439,7 +1554,6 @@ export default function App() {
       {/* Hidden Inputs */}
       <audio 
         ref={audioRef} 
-        playsInline 
         src={currentTrack?.url} 
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
