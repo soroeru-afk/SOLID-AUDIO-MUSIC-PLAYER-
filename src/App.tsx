@@ -1166,6 +1166,21 @@ export default function App() {
     setThemeIndex((prev) => (prev + 1) % THEMES.length);
   };
 
+  // --- Playlist Ordering ---
+  const movePlaylist = (e: React.MouseEvent, fromIndex: number, toIndex: number) => {
+    e.stopPropagation();
+    setPlaylists(prev => {
+      if (fromIndex === 0 || toIndex === 0) return prev; // 'all-tracks' は先頭固定
+      if (toIndex < 1) toIndex = 1;
+      if (toIndex >= prev.length) toIndex = prev.length - 1;
+      
+      const next = [...prev];
+      const [item] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, item);
+      return next;
+    });
+  };
+
   // --- Track Ordering ---
   const moveTrack = (e: React.MouseEvent, fromIndex: number, toIndex: number) => {
     e.stopPropagation();
@@ -1969,7 +1984,7 @@ export default function App() {
             <span className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--theme-textMuted)' }}>INDEX MAP</span>
           </div>
           <div className="flex flex-col h-full overflow-y-auto w-full">
-            {playlists.map((pl) => (
+            {playlists.map((pl, plIdx) => (
               <div
                 key={pl.id}
                 onClick={() => setActivePlaylistId(pl.id)}
@@ -1979,7 +1994,7 @@ export default function App() {
                     setRenamingPlaylistName(pl.name);
                   }
                 }}
-                className="text-left px-3 py-2 text-[10px] tracking-widest flex items-center justify-between border-b transition-colors cursor-pointer"
+                className="text-left px-3 py-2 text-[10px] tracking-widest flex items-center justify-between border-b transition-colors cursor-pointer group"
                 style={{
                   backgroundColor: activePlaylistId === pl.id ? 'var(--theme-accentMuted)' : 'transparent',
                   borderBottomColor: 'var(--theme-border)',
@@ -2025,17 +2040,31 @@ export default function App() {
                     {pl.tracks.length.toString().padStart(3, '0')}
                   </span>
                   {pl.id !== 'all-tracks' && (
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPlaylists(prev => prev.filter(p => p.id !== pl.id));
-                        if (activePlaylistId === pl.id) setActivePlaylistId('all-tracks');
-                        if (playingPlaylistId === pl.id) setPlayingPlaylistId('all-tracks');
-                      }}
-                      className="hover:opacity-80 transition-opacity"
-                    >
-                      <X size={10} style={{ color: activePlaylistId === pl.id ? 'var(--theme-textMain)' : 'var(--theme-textDim)' }} />
-                    </button>
+                    <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => movePlaylist(e, plIdx, plIdx - 1)}
+                        className="hover:opacity-80 transition-opacity flex items-center justify-center"
+                      >
+                        <ChevronUp size={12} style={{ color: 'var(--theme-textDim)' }} />
+                      </button>
+                      <button 
+                        onClick={(e) => movePlaylist(e, plIdx, plIdx + 1)}
+                        className="hover:opacity-80 transition-opacity flex items-center justify-center"
+                      >
+                        <ChevronDown size={12} style={{ color: 'var(--theme-textDim)' }} />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPlaylists(prev => prev.filter(p => p.id !== pl.id));
+                          if (activePlaylistId === pl.id) setActivePlaylistId('all-tracks');
+                          if (playingPlaylistId === pl.id) setPlayingPlaylistId('all-tracks');
+                        }}
+                        className="hover:opacity-80 transition-opacity ml-1"
+                      >
+                        <X size={10} style={{ color: activePlaylistId === pl.id ? 'var(--theme-textMain)' : 'var(--theme-textDim)' }} />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
